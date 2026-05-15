@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from synapse.axes import AxisMap
 from synapse.config import EngineConfig, RestimInstanceConfig
 from synapse.patterns.player import PatternPlayer
 from synapse.tcode import TCodeFormatter
+
+if TYPE_CHECKING:
+    from synapse.sessions.manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +25,15 @@ class TCodeEngine:
         engine_config: EngineConfig,
         axis_map: AxisMap,
         player: PatternPlayer,
+        session_manager: Optional["SessionManager"] = None,
     ) -> None:
         self._inst = instance_config
         self._config = engine_config
         self._axis_map = axis_map
         self._player = player
         self._formatter = TCodeFormatter(axis_map)
+        self._session_manager = session_manager
+        self._session_start_wall: float = time.monotonic()
 
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -131,6 +137,11 @@ class TCodeEngine:
         # Evaluate player
         values = self._player.evaluate(t)
         self._current_values = dict(values)
+
+        # Session recording — only do work if a recorder is active for this instance
+        if self._session_manager is not None and self._session_manager.is_recording(self._inst.id):
+            elapsed_ms = int((now - self._session_start_wall) * 1000)
+            self._session_manager.record_tick(self._inst.id, self._current_values, elapsed_ms)
 
         # Heartbeat: resend one axis if idle
         if not values and (now - self._last_send_time) > HEARTBEAT_INTERVAL:

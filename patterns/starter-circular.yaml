@@ -1,0 +1,10 @@
+name: "starter-circular"
+description: "Circular spatial motion at moderate intensity"
+base_period: 3.0
+layers:
+  - name: base
+    blend: set
+    axes:
+      V0: { waveform: hold, center: 0.4, amplitude: 0.0 }
+      L0: { waveform: sine, freq_multiple: 1.0, center: 0.0, amplitude: 0.6 }
+      L1: { waveform: sine, freq_multiple: 1.0, center: 0.0, amplitude: 0.6, offset: 0.25 }

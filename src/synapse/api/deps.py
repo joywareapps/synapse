@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from synapse.patterns.player import PatternPlayer
     from synapse.restim_client import RestimClient
     from synapse.sensors.manager import SensorManager
+    from synapse.sessions.manager import SessionManager
+    from synapse.profiles.store import ProfileStore
 
 
 class AppContext:
@@ -22,6 +24,8 @@ class AppContext:
     store: "PatternStore"
     restim_clients: "dict[str, RestimClient]"
     sensor_manager: "SensorManager"
+    session_manager: "SessionManager"
+    profile_store: "ProfileStore"
     start_time: float
 
 

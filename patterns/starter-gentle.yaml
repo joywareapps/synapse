@@ -1,0 +1,10 @@
+name: "starter-gentle"
+description: "Very gentle warmup — slow sine pulse at low volume"
+base_period: 4.0
+layers:
+  - name: base
+    blend: set
+    axes:
+      V0: { waveform: sine, freq_multiple: 1.0, center: 0.25, amplitude: 0.1 }
+      C0: { waveform: hold, center: 0.5, amplitude: 0.0 }
+      P0: { waveform: hold, center: 0.4, amplitude: 0.0 }

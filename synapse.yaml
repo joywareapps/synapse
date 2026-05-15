@@ -45,5 +45,12 @@ sensors:
     scale_min_bpm: 40
     scale_max_bpm: 180
 
+sessions:
+  directory: "./sessions"
+  auto_name: true           # generate timestamp name if none given
+
+profiles:
+  directory: "./profiles"
+
 logging:
   level: "INFO"

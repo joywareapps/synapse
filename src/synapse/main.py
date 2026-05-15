@@ -17,8 +17,10 @@ from synapse.engine import TCodeEngine
 from synapse.ini_parser import IniWatcher, parse_ini_file
 from synapse.patterns.player import PatternPlayer
 from synapse.patterns.store import PatternStore
+from synapse.profiles.store import ProfileStore
 from synapse.restim_client import RestimClient
 from synapse.sensors.manager import SensorManager
+from synapse.sessions.manager import SessionManager
 
 
 def _setup_logging(level: str) -> None:
@@ -68,6 +70,8 @@ async def _run(config_path: Optional[str] = None) -> None:
             duck_ms=t.duck_ms,
             ramp_ms=t.ramp_ms,
         )
+        # session_manager wired after creation below — passed as None for now,
+        # then set after session_manager is created
         engine = TCodeEngine(inst, config.engine, axis_map, player)
         client = RestimClient(inst)
         players[inst.id] = player
@@ -75,6 +79,14 @@ async def _run(config_path: Optional[str] = None) -> None:
         restim_clients[inst.id] = client
 
     sensor_manager = SensorManager(config.sensors)
+
+    # Session manager and profile store
+    session_manager = SessionManager(config.sessions.directory)
+    profile_store = ProfileStore(config.profiles.directory)
+
+    # Wire session_manager into engines
+    for engine in engines.values():
+        engine._session_manager = session_manager
 
     # Populate shared context
     ctx.config = config
@@ -84,6 +96,8 @@ async def _run(config_path: Optional[str] = None) -> None:
     ctx.store = store
     ctx.restim_clients = restim_clients
     ctx.sensor_manager = sensor_manager
+    ctx.session_manager = session_manager
+    ctx.profile_store = profile_store
     ctx.start_time = time.monotonic()
 
     # Start background tasks

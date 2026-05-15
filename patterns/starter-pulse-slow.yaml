@@ -1,0 +1,9 @@
+name: "starter-pulse-slow"
+description: "Slow escalating pulse texture"
+base_period: 6.0
+layers:
+  - name: base
+    blend: set
+    axes:
+      V0: { waveform: hold, center: 0.4, amplitude: 0.0 }
+      P0: { waveform: triangle, freq_multiple: 1.0, center: 0.5, amplitude: 0.4 }

@@ -14,15 +14,19 @@ from synapse.config import (
     EngineConfig,
     McpConfig,
     PatternsConfig,
+    ProfilesConfig,
     RestimConfig,
     SensorsConfig,
+    SessionsConfig,
     TransitionConfig,
     ApiConfig,
     LoggingConfig,
 )
 from synapse.patterns.player import PatternPlayer
 from synapse.patterns.store import PatternStore
+from synapse.profiles.store import ProfileStore
 from synapse.sensors.manager import SensorManager
+from synapse.sessions.manager import SessionManager
 
 
 def _make_fake_engine():
@@ -82,6 +86,8 @@ def client(tmp_path):
             transition=TransitionConfig(),
         ),
         sensors=SensorsConfig(),
+        sessions=SessionsConfig(directory=str(tmp_path / "sessions")),
+        profiles=ProfilesConfig(directory=str(tmp_path / "profiles")),
         logging=LoggingConfig(),
     )
 
@@ -92,6 +98,8 @@ def client(tmp_path):
     ctx.store = store
     ctx.restim_clients = {"primary": fake_restim}
     ctx.sensor_manager = SensorManager(config.sensors)
+    ctx.session_manager = SessionManager(config.sessions.directory)
+    ctx.profile_store = ProfileStore(config.profiles.directory)
     ctx.start_time = time.monotonic()
 
     return TestClient(app)

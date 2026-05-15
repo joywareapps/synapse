@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from synapse.api.routes_state import router as state_router
 from synapse.api.routes_control import router as control_router
 from synapse.api.routes_patterns import router as patterns_router
+from synapse.api.routes_sessions import router as sessions_router
+from synapse.api.routes_profiles import router as profiles_router
 from synapse.api.websocket import router as ws_router
 
 
@@ -41,6 +43,8 @@ def create_app(
     app.include_router(state_router)
     app.include_router(control_router)
     app.include_router(patterns_router)
+    app.include_router(sessions_router)
+    app.include_router(profiles_router)
     app.include_router(ws_router)
 
     if web_dir:

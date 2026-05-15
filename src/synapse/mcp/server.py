@@ -670,6 +670,192 @@ async def move_step(pattern_name: str, step_index: int, new_index: int) -> dict[
     return {"index": new_idx}
 
 
+# ── Session Recording ─────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def start_session(name: str, instance: str = "primary") -> dict[str, Any]:
+    """Start recording all axis outputs to funscript files."""
+    from datetime import datetime, timezone
+    session_name = name or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    axis_ids = [a.tcode_id for a in ctx.axis_map.all_enabled()]
+    ctx.session_manager.start_session(session_name, instance, axis_ids)
+    return {"status": "recording", "name": session_name, "instance": instance}
+
+
+@mcp.tool()
+async def stop_session(instance: str = "primary") -> dict[str, Any]:
+    """Stop recording and flush funscript files. Returns session metadata."""
+    meta = ctx.session_manager.stop_session(instance)
+    if meta is None:
+        return {"error": f"No active session for instance '{instance}'"}
+    return meta.to_dict()
+
+
+@mcp.tool()
+async def list_sessions() -> list[dict[str, Any]]:
+    """List all recorded sessions."""
+    return [m.to_dict() for m in ctx.session_manager.list_sessions()]
+
+
+# ── User Profiles ─────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_profiles() -> list[dict[str, Any]]:
+    """List all user profiles."""
+    return [p.to_dict() for p in ctx.profile_store.list()]
+
+
+@mcp.tool()
+async def get_profile(name: str) -> dict[str, Any]:
+    """Get a user profile by name."""
+    profile = ctx.profile_store.get(name)
+    if profile is None:
+        return {"error": f"Profile '{name}' not found"}
+    return profile.to_dict()
+
+
+@mcp.tool()
+async def update_profile(
+    name: str,
+    preferred_volume_range: Optional[list] = None,
+    preferred_patterns: Optional[list] = None,
+    disliked_patterns: Optional[list] = None,
+    preferred_carrier_hz: Optional[float] = None,
+    preferred_pulse_hz: Optional[float] = None,
+    preferred_base_period_s: Optional[float] = None,
+    notes: Optional[str] = None,
+    tags: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Partially update a user profile. Only provided fields are changed."""
+    kwargs: dict[str, Any] = {}
+    if preferred_volume_range is not None:
+        kwargs["preferred_volume_range"] = preferred_volume_range
+    if preferred_patterns is not None:
+        kwargs["preferred_patterns"] = preferred_patterns
+    if disliked_patterns is not None:
+        kwargs["disliked_patterns"] = disliked_patterns
+    if preferred_carrier_hz is not None:
+        kwargs["preferred_carrier_hz"] = preferred_carrier_hz
+    if preferred_pulse_hz is not None:
+        kwargs["preferred_pulse_hz"] = preferred_pulse_hz
+    if preferred_base_period_s is not None:
+        kwargs["preferred_base_period_s"] = preferred_base_period_s
+    if notes is not None:
+        kwargs["notes"] = notes
+    if tags is not None:
+        kwargs["tags"] = tags
+
+    profile = ctx.profile_store.update(name, **kwargs)
+    if profile is None:
+        return {"error": f"Profile '{name}' not found"}
+    return profile.to_dict()
+
+
+# ── Exploration & A/B Testing ─────────────────────────────────────────────────
+
+@mcp.tool()
+async def start_ab_test(
+    profile_name: str,
+    variable: str,
+    option_a: dict,
+    option_b: dict,
+) -> dict[str, Any]:
+    """Record start of an A/B test. Returns test_id."""
+    from synapse.profiles.models import ABTestResult
+    profile = ctx.profile_store.get(profile_name)
+    if profile is None:
+        return {"error": f"Profile '{profile_name}' not found"}
+
+    test = ABTestResult.new(variable=variable, option_a=option_a, option_b=option_b)
+    if "ab_tests" not in profile.tags:
+        profile.tags["ab_tests"] = []
+    profile.tags["ab_tests"].append(test.to_dict())
+    ctx.profile_store.save(profile)
+    return {"test_id": test.test_id, "variable": variable}
+
+
+@mcp.tool()
+async def record_ab_result(
+    profile_name: str,
+    test_id: str,
+    winner: str,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Record winner of an A/B test and save to profile."""
+    profile = ctx.profile_store.get(profile_name)
+    if profile is None:
+        return {"error": f"Profile '{profile_name}' not found"}
+
+    ab_tests = profile.tags.get("ab_tests", [])
+    for test_dict in ab_tests:
+        if test_dict.get("test_id") == test_id:
+            test_dict["winner"] = winner
+            test_dict["notes"] = notes
+            profile.tags["ab_tests"] = ab_tests
+            ctx.profile_store.save(profile)
+            return {"status": "recorded", "test_id": test_id, "winner": winner}
+    return {"error": f"Test '{test_id}' not found in profile '{profile_name}'"}
+
+
+_EXPLORATION_ORDER = [
+    "volume_range",
+    "carrier_freq",
+    "pulse_freq",
+    "base_period",
+    "spatial_motion",
+    "pattern_complexity",
+]
+
+
+@mcp.tool()
+async def get_exploration_summary(profile_name: str) -> dict[str, Any]:
+    """Return discovered preferences and recommended next A/B test variable."""
+    profile = ctx.profile_store.get(profile_name)
+    if profile is None:
+        return {"error": f"Profile '{profile_name}' not found"}
+
+    ab_tests = profile.tags.get("ab_tests", [])
+
+    # Count results per variable
+    tested: dict[str, list[dict]] = {}
+    for test in ab_tests:
+        var = test.get("variable", "unknown")
+        tested.setdefault(var, []).append(test)
+
+    # Summarise what we know
+    summary: dict[str, Any] = {}
+    for var, results in tested.items():
+        winners = [r["winner"] for r in results if r.get("winner")]
+        a_wins = winners.count("a")
+        b_wins = winners.count("b")
+        # Determine preferred option from majority
+        preferred_option = None
+        if a_wins > b_wins:
+            preferred_option = results[-1].get("option_a") if results else None
+        elif b_wins > a_wins:
+            preferred_option = results[-1].get("option_b") if results else None
+        summary[var] = {
+            "test_count": len(results),
+            "a_wins": a_wins,
+            "b_wins": b_wins,
+            "preferred_option": preferred_option,
+        }
+
+    # Suggest next variable to test
+    next_variable = None
+    for var in _EXPLORATION_ORDER:
+        if var not in tested:
+            next_variable = var
+            break
+
+    return {
+        "profile": profile_name,
+        "tested_variables": summary,
+        "next_recommended_variable": next_variable,
+        "exploration_complete": next_variable is None,
+    }
+
+
 # ── MCP Resources ─────────────────────────────────────────────────────────────
 
 @mcp.resource("synapse://status")
@@ -700,3 +886,34 @@ async def resource_pattern(name: str) -> str:
     if p is None:
         return json.dumps({"error": f"Pattern '{name}' not found"})
     return json.dumps(pattern_to_dict(p), indent=2)
+
+
+@mcp.resource("synapse://guide")
+async def get_guide() -> str:
+    """Operational guide for LLM. Read this before any session."""
+    import pathlib
+    # Walk up from this file to find docs/mcp-guide.md
+    here = pathlib.Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "docs" / "mcp-guide.md"
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+    return "Guide not found. Proceed with caution and follow safety rules."
+
+
+@mcp.resource("synapse://profile/{name}")
+async def get_profile_resource(name: str) -> str:
+    """User profile as YAML."""
+    import yaml
+    profile = ctx.profile_store.get(name)
+    if profile is None:
+        return f"Profile '{name}' not found."
+    return yaml.dump(profile.to_dict(), default_flow_style=False, allow_unicode=True)
+
+
+@mcp.resource("synapse://sessions")
+async def get_sessions_resource() -> str:
+    """Session list as JSON."""
+    import json
+    sessions = ctx.session_manager.list_sessions()
+    return json.dumps([s.to_dict() for s in sessions], indent=2)

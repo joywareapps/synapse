@@ -1,0 +1,12 @@
+name: "starter-escalate"
+description: "Gentle 3-minute buildup — gentle → moderate → intense"
+loop: false
+steps:
+  - pattern: "starter-gentle"
+    duration: 60.0
+  - pattern: "starter-moderate"
+    duration: 60.0
+    transition: { duck_ms: 300, ramp_ms: 600 }
+  - pattern: "starter-circular"
+    duration: 60.0
+    transition: { duck_ms: 300, ramp_ms: 600 }

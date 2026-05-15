@@ -83,6 +83,17 @@ class SensorsConfig:
 
 
 @dataclass
+class SessionsConfig:
+    directory: str = "./sessions"
+    auto_name: bool = True
+
+
+@dataclass
+class ProfilesConfig:
+    directory: str = "./profiles"
+
+
+@dataclass
 class LoggingConfig:
     level: str = "INFO"
 
@@ -95,6 +106,8 @@ class Config:
     mcp: McpConfig = field(default_factory=McpConfig)
     patterns: PatternsConfig = field(default_factory=PatternsConfig)
     sensors: SensorsConfig = field(default_factory=SensorsConfig)
+    sessions: SessionsConfig = field(default_factory=SessionsConfig)
+    profiles: ProfilesConfig = field(default_factory=ProfilesConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
@@ -229,6 +242,17 @@ def _dict_to_config(data: dict) -> Config:
     )
     sensors = SensorsConfig(as5311=as5311, heart_rate=heart_rate)
 
+    sessions_data = data.get("sessions", {})
+    sessions = SessionsConfig(
+        directory=sessions_data.get("directory", "./sessions"),
+        auto_name=bool(sessions_data.get("auto_name", True)),
+    )
+
+    profiles_data = data.get("profiles", {})
+    profiles = ProfilesConfig(
+        directory=profiles_data.get("directory", "./profiles"),
+    )
+
     logging_data = data.get("logging", {})
     logging_cfg = LoggingConfig(level=logging_data.get("level", "INFO"))
 
@@ -239,6 +263,8 @@ def _dict_to_config(data: dict) -> Config:
         mcp=mcp,
         patterns=patterns,
         sensors=sensors,
+        sessions=sessions,
+        profiles=profiles,
         logging=logging_cfg,
     )
 
