@@ -791,8 +791,175 @@ To trigger via API/MCP:
 
 This replaces the old dedicated spike mechanism with a more flexible composable system.
 
-## 16. Future Scope
+## 16. Future Scope (v1 backlog)
 
 - **Funscript playback** — Load `.funscript` files and drive axes from them. Will integrate routines from [funscript-tools](https://github.com/edger477/funscript-tools) in a future iteration.
 - **Pattern import/export** — Share patterns between setups (already supported via YAML files in the patterns directory).
 - **Funscript-to-pattern conversion** — Convert a funscript into a pattern (timed axis values → hold layers).
+
+---
+
+## 17. Version 2 Features
+
+### 17.1 Session Recording
+
+Record a full session to funscript files for replay, sharing, or analysis. Every active axis is captured.
+
+**File format**: One file per axis per session, named `{session_name}.{axis_name}.funscript` (e.g. `2026-05-16-evening.V0.funscript`). Stored in `./sessions/`. Format is standard Restim-compatible funscript JSON:
+
+```json
+{
+  "version": 1,
+  "inverted": false,
+  "range": 100,
+  "actions": [
+    {"at": 0,    "pos": 30},
+    {"at": 20,   "pos": 31},
+    {"at": 40,   "pos": 33}
+  ]
+}
+```
+
+`pos` is `round(normalized_axis_value * 100)`. `at` is milliseconds from session start. Written at the engine's update rate (default 50Hz = one entry per 20ms). Files are flushed periodically (every second) so a crash does not lose the session.
+
+**REST API:**
+- `POST /api/sessions/start` — `{ "name": "session-name", "instance": "primary" }` → starts recording all active axes
+- `POST /api/sessions/stop` — `{ "instance": "primary" }` → flushes and closes files; returns list of files written
+- `GET /api/sessions` — list recorded sessions (name, date, files, duration)
+- `GET /api/sessions/{name}` — session metadata and file list
+- `DELETE /api/sessions/{name}` — delete session files
+
+**MCP tools:**
+| Tool | Parameters |
+|------|------------|
+| `start_session` | `name: str, instance: str` |
+| `stop_session` | `instance: str` |
+| `list_sessions` | — |
+
+**Config:**
+```yaml
+sessions:
+  directory: "./sessions"
+  auto_name: true     # if true, auto-generate name from timestamp when none provided
+```
+
+**Replay**: Load the generated `.funscript` files directly in Restim via its funscript kit. Axis names match Restim's `funscript_names` field in the INI (e.g. `V0` → filename `{name}.V0.funscript` or the configured funscript alias).
+
+---
+
+### 17.2 User Profile
+
+Persistent per-user preferences the LLM reads at session start and updates as it learns. Stored as YAML in `./profiles/{name}.yaml`.
+
+```python
+@dataclass
+class UserProfile:
+    name: str
+    created_at: str                          # ISO timestamp
+    updated_at: str
+
+    # Preferences discovered through exploration
+    preferred_volume_range: tuple[float, float] = (0.2, 0.6)
+    preferred_patterns: list[str] = field(default_factory=list)
+    disliked_patterns: list[str] = field(default_factory=list)
+    preferred_carrier_hz: Optional[float] = None
+    preferred_pulse_hz: Optional[float] = None
+    preferred_base_period_s: Optional[float] = None
+
+    # Session history
+    session_count: int = 0
+    total_duration_s: float = 0.0
+    last_session_at: Optional[str] = None
+
+    # Freeform LLM notes — the LLM writes and reads these
+    notes: str = ""
+
+    # Arbitrary key-value store for LLM use
+    tags: dict[str, Any] = field(default_factory=dict)
+```
+
+The `notes` and `tags` fields are unstructured — the LLM owns them and can write whatever is useful for future sessions (e.g. "responds well to slow oscillation", "prefers no spatial movement").
+
+**REST API:**
+- `GET /api/profiles` — list profiles
+- `POST /api/profiles` — create profile `{ "name": "user-name" }`
+- `GET /api/profiles/{name}` — get profile
+- `PATCH /api/profiles/{name}` — partial update (any field)
+- `DELETE /api/profiles/{name}` — delete profile
+
+**MCP tools:**
+| Tool | Parameters |
+|------|------------|
+| `get_profile` | `name: str` |
+| `update_profile` | `name: str, preferred_volume_range?, preferred_patterns?, notes?, tags?` |
+| `list_profiles` | — |
+
+**Session–profile link**: When starting a session, optionally associate it with a profile. At session end, `session_count` and `total_duration_s` are automatically updated.
+
+---
+
+### 17.3 Exploration & A/B Testing Workflow
+
+Built-in support for systematic exploration, guided by the LLM. The goal is to discover user preferences through structured comparison rather than guesswork.
+
+#### A/B Test
+
+An A/B test records two named variants, plays each, and stores the user's preference.
+
+```python
+@dataclass
+class ABTestResult:
+    test_id: str
+    timestamp: str
+    variable: str              # what was being compared (e.g. "carrier_freq", "pattern")
+    option_a: dict             # description of option A (e.g. {"carrier_hz": 600})
+    option_b: dict             # description of option B
+    winner: Optional[str]      # "a", "b", or None (no preference)
+    notes: str = ""
+```
+
+Results are stored in the user profile under `tags["ab_tests"]`.
+
+**MCP tools for exploration:**
+| Tool | Parameters |
+|------|------------|
+| `start_ab_test` | `profile_name: str, variable: str, option_a: dict, option_b: dict` → returns `test_id` |
+| `record_ab_result` | `test_id: str, winner: str, notes?: str` |
+| `get_exploration_summary` | `profile_name: str` → returns discovered preferences and recommended next tests |
+
+**Recommended exploration order** (encoded as LLM guidance in `synapse://guide`):
+1. Volume comfort range — find the range the user is comfortable in
+2. Carrier frequency — compare 600Hz / 800Hz / 1000Hz
+3. Pulse frequency — compare 30Hz / 60Hz / 90Hz  
+4. Oscillation speed — compare `base_period` 1s / 2s / 4s
+5. Spatial motion — test L0/L1 circular motion vs no spatial movement
+6. Pattern complexity — simple single-layer vs multi-layer
+
+#### Default Starter Patterns
+
+A set of built-in patterns ships with Synapse specifically for exploration. They are installed to `./patterns/` on first run if the directory is empty:
+
+| Pattern name | Description |
+|---|---|
+| `starter-gentle` | V0 slow sine at 30% volume — warmup baseline |
+| `starter-moderate` | V0 sine at 50%, moderate pace |
+| `starter-circular` | L0+L1 circular motion at moderate intensity |
+| `starter-pulse-slow` | P0 triangle sweep, slow |
+| `starter-pulse-fast` | P0 triangle sweep, faster |
+| `starter-escalate` | Sequence: gentle → moderate → intense over 3 minutes |
+
+These give the LLM immediate material for A/B comparisons without needing to build patterns first.
+
+---
+
+### 17.4 MCP Guide Resource
+
+The MCP server exposes an operational guide as a resource so the LLM loads it automatically when connecting:
+
+| Resource | Description |
+|----------|-------------|
+| `synapse://guide` | Full operational guide (safety rules, workflows, tool reference) |
+| `synapse://profile/{name}` | User profile YAML |
+| `synapse://sessions` | Session list |
+
+`synapse://guide` is served from `docs/mcp-guide.md`. The LLM should read this resource before taking any actions in a new session.

@@ -1,0 +1,49 @@
+# Synapse configuration
+restim:
+  ini_path: "./restim.ini"           # Path to restim.ini for axis limits
+  instances:
+    - id: "primary"
+      host: "localhost"
+      tcode_port: 12347              # TCode TCP port
+      rest_port: 12348               # REST API port
+      enabled: true
+
+engine:
+  update_rate_hz: 50                 # TCode command rate
+  reconnect_delay_ms: 1000          # Initial reconnect delay
+  max_reconnect_delay_ms: 30000     # Max reconnect delay (exponential backoff)
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+  auth_key: ""                       # Optional API key
+
+mcp:
+  enabled: true
+  transport: "sse"                   # "sse" or "stdio"
+  port: 8081                         # SSE port (if sse)
+  localhost_only: true               # When true, MCP SSE binds to 127.0.0.1 only
+  bearer_token: ""                   # If set, SSE clients must supply Authorization: Bearer <token>
+
+patterns:
+  directory: "./patterns"            # Where to store pattern YAML files
+  transition:
+    duck_amount: 1.0                 # Fraction of current V0 to remove on switch
+    duck_ms: 200                     # Time to ramp volume down
+    ramp_ms: 400                     # Time to ramp volume back up after switch
+
+sensors:
+  as5311:
+    enabled: false
+    url: "ws://localhost:12346/sensors/as5311"
+    threshold_mm: 0.0
+    range_mm: 2.0
+  heart_rate:
+    enabled: false
+    device_address: ""
+    device_label: ""
+    scale_min_bpm: 40
+    scale_max_bpm: 180
+
+logging:
+  level: "INFO"
