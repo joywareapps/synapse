@@ -121,7 +121,7 @@ synapse --config synapse.yaml
 ```
 
 Web UI: http://localhost:8080  
-MCP SSE endpoint: http://localhost:8081/mcp  
+MCP SSE endpoint: http://localhost:8081/sse  
 
 ## Configuration
 
@@ -241,7 +241,7 @@ Add to your Claude config (`~/.claude.json` or project config):
   "mcpServers": {
     "synapse": {
       "type": "sse",
-      "url": "http://localhost:8081/mcp"
+      "url": "http://localhost:8081/sse"
     }
   }
 }
