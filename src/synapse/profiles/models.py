@@ -6,6 +6,34 @@ from typing import Any, Optional
 
 
 @dataclass
+class Memory:
+    id: str                           # uuid4 string
+    text: str
+    category: str = "general"        # "preference"|"reaction"|"observation"|"todo"|"general"
+    created_at: str = ""              # ISO timestamp, set on creation
+    session_name: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "text": self.text,
+            "category": self.category,
+            "created_at": self.created_at,
+            "session_name": self.session_name,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Memory":
+        return cls(
+            id=d["id"],
+            text=d["text"],
+            category=d.get("category", "general"),
+            created_at=d.get("created_at", ""),
+            session_name=d.get("session_name"),
+        )
+
+
+@dataclass
 class UserProfile:
     name: str
     created_at: str

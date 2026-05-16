@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Dependency injection container for FastAPI routes."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from synapse.axes import AxisMap
@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from synapse.sensors.manager import SensorManager
     from synapse.sessions.manager import SessionManager
     from synapse.profiles.store import ProfileStore
+    from synapse.agent.agent import SynapseAgent
+    from synapse.agent.loop import AgentLoop
 
 
 class AppContext:
@@ -27,6 +29,11 @@ class AppContext:
     session_manager: "SessionManager"
     profile_store: "ProfileStore"
     start_time: float
+
+    # Agent (§18) — optional, created on first use
+    agent: "Optional[SynapseAgent]" = None
+    agent_loop: "Optional[AgentLoop]" = None
+    active_profile_name: "Optional[str]" = None
 
 
 # Singleton context — set by main.py before serving

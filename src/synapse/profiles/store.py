@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import yaml
 
-from synapse.profiles.models import UserProfile
+from synapse.profiles.models import Memory, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,59 @@ class ProfileStore:
             path.unlink()
             return True
         return False
+
+    def add_memory(
+        self,
+        profile_name: str,
+        text: str,
+        category: str = "general",
+        session_name: Optional[str] = None,
+    ) -> Memory:
+        """Add a memory to a profile. Returns the new Memory."""
+        from datetime import datetime, timezone
+        profile = self.get(profile_name)
+        if profile is None:
+            raise ValueError(f"Profile '{profile_name}' not found")
+        memory = Memory(
+            id=str(__import__("uuid").uuid4()),
+            text=text,
+            category=category,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            session_name=session_name,
+        )
+        memories: list[dict] = profile.tags.get("memories", [])
+        memories.append(memory.to_dict())
+        profile.tags["memories"] = memories
+        profile.updated_at = _now_iso()
+        self.save(profile)
+        return memory
+
+    def get_memories(self, profile_name: str, query: str = "") -> list[Memory]:
+        """Return memories for a profile, optionally filtered by substring match."""
+        profile = self.get(profile_name)
+        if profile is None:
+            return []
+        raw: list[dict] = profile.tags.get("memories", [])
+        memories = [Memory.from_dict(d) for d in raw]
+        if query:
+            q = query.lower()
+            memories = [m for m in memories if q in m.text.lower()]
+        return memories
+
+    def delete_memory(self, profile_name: str, memory_id: str) -> bool:
+        """Delete a memory by ID. Returns True if found and deleted."""
+        profile = self.get(profile_name)
+        if profile is None:
+            return False
+        memories: list[dict] = profile.tags.get("memories", [])
+        before = len(memories)
+        memories = [m for m in memories if m.get("id") != memory_id]
+        if len(memories) == before:
+            return False
+        profile.tags["memories"] = memories
+        profile.updated_at = _now_iso()
+        self.save(profile)
+        return True
 
     def update(self, name: str, **kwargs: Any) -> Optional[UserProfile]:
         """Partial update — sets updated_at automatically."""

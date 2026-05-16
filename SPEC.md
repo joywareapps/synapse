@@ -962,4 +962,141 @@ The MCP server exposes an operational guide as a resource so the LLM loads it au
 | `synapse://profile/{name}` | User profile YAML |
 | `synapse://sessions` | Session list |
 
+---
+
+## 18. Embedded Agent (Local LLM Chat)
+
+Synapse can embed an LLM agent that uses a local LLM (Ollama or LM Studio) to control the device conversationally or autonomously. The agent has the same tool access as the MCP server, shares a single tool registry, and persists observations to the user profile rather than relying on context window alone.
+
+### 18.1 Shared Tool Registry
+
+All tool functions are defined once in `src/synapse/tools/registry.py` and used by both the MCP server and the embedded agent. The MCP server wraps them with `@mcp.tool()` decorators; the agent calls them directly.
+
+```
+src/synapse/tools/
+├── registry.py    # all tool functions as plain async def
+└── __init__.py
+
+src/synapse/mcp/server.py   # @mcp.tool() wrappers around registry functions
+src/synapse/agent/          # calls registry functions directly
+```
+
+### 18.2 LLM Provider Auto-Detection
+
+```python
+@dataclass
+class LLMProvider:
+    name: str           # "ollama" | "lm_studio"
+    base_url: str
+    models: list[str]   # models that advertise tool use capability
+    active: bool
+```
+
+Detection order: probe Ollama (`localhost:11434/api/tags`), then LM Studio (`localhost:1234/v1/models`). Both expose an OpenAI-compatible `/v1/chat/completions` endpoint. The agent uses whichever is detected first, or the one configured explicitly.
+
+`GET /api/agent/providers` — returns detected providers and their available models (tool-capable models marked).
+
+### 18.3 Memory System
+
+The context window is ephemeral — the agent must actively write important observations to the user profile. The profile is the persistent memory.
+
+```python
+@dataclass
+class Memory:
+    id: str             # uuid4
+    text: str           # the memory content
+    category: str       # "preference" | "reaction" | "observation" | "todo" | "general"
+    created_at: str     # ISO timestamp
+    session_name: Optional[str]  # session in which it was created
+```
+
+Stored in `profile.tags["memories"]` as a list of dicts.
+
+**Memory tools** (available to the agent, also exposed via MCP):
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `remember` | `text: str, category: str = "general"` | Save a memory to the active profile. Use for anything worth knowing in future sessions. |
+| `recall` | `query: str = ""` | List memories from the active profile, optionally filtered by text match. |
+| `note_observation` | `text: str` | Save a session-scoped observation (stored in session metadata, not the profile). Lighter-weight than `remember`. |
+| `forget` | `memory_id: str` | Remove a memory by ID. |
+
+**When to use each:**
+- `remember` — for durable insights: preferences, reactions, things to try next time
+- `note_observation` — for in-session context: "user just asked to slow down", "sensor spiked"
+- Profile `notes` field — LLM can also directly `update_profile(notes=...)` for long-form summary
+
+### 18.4 System Prompt & Context Injection
+
+Every LLM call gets a freshly-built system prompt:
+
+```
+[Operational Guide]
+{contents of docs/mcp-guide.md}
+
+[Active Profile: {name}]
+Preferred volume range: 0.2–0.5
+Preferred patterns: starter-moderate, circular-motion
+Notes: {profile.notes}
+
+[Memories]
+• [2026-05-16, preference] Prefers slow oscillation (base_period > 3s)
+• [2026-05-16, reaction] Strong positive reaction to circular motion
+• [2026-05-15, todo] Try higher carrier frequency next session
+
+[Current State]
+Instance: primary | Connected: yes | Active pattern: starter-moderate
+Sensors: heart_rate=0.65 (110 bpm) | as5311=0.3
+```
+
+If no profile is active, the profile and memories sections are omitted. The current state block is rebuilt on every call from live data.
+
+### 18.5 Conversation & Autonomous Loop
+
+**Chat mode** — user sends a message, agent responds (possibly calling tools), response shown in UI. Standard LLM tool-use loop.
+
+**Autonomous loop** — runs as an asyncio background task. Every `loop_interval_s` seconds:
+1. Build context block from current state + sensors
+2. Send to LLM with instruction: "React only if something meaningful changed or needs attention. If nothing requires action, respond with a brief status note or say nothing."
+3. If LLM calls tools, execute them; if it just responds with text, show in chat
+4. All loop output appears in the shared chat history as agent messages
+
+Two loop modes:
+- `observe` (default) — agent may only call read tools (`get_status`, `get_axes`, `get_sensors`, `recall`, `note_observation`). Cannot change device state.
+- `act` — full tool access, capped at `max_tool_calls_per_tick` (default 2) and with a cooldown after any volume change.
+
+### 18.6 REST API
+
+```
+GET  /api/agent/providers                       List detected LLM providers + models
+POST /api/agent/chat                            { message, profile_name? } → { response, tool_calls[] }
+GET  /api/agent/history                         Full conversation history
+DELETE /api/agent/history                       Clear history
+POST /api/agent/loop/start                      { model, interval_s, mode, profile_name? }
+POST /api/agent/loop/stop
+GET  /api/agent/loop/status                     { running, mode, interval_s, tick_count, last_tick_at }
+WS   /ws/agent                                  Stream agent messages + tool calls in real time
+```
+
+### 18.7 Config
+
+```yaml
+agent:
+  provider: "auto"                  # "ollama" | "lm_studio" | "auto"
+  ollama_url: "http://localhost:11434"
+  lm_studio_url: "http://localhost:1234"
+  model: ""                         # empty = first tool-capable model found
+  loop_interval_s: 30
+  loop_mode: "observe"
+  max_tool_calls_per_tick: 2
+  system_prompt_extra: ""           # appended to the built-in guide
+```
+
+### 18.8 Web UI additions
+
+- **Chat panel** — message input, conversation history, tool call display (collapsible), agent/user message distinction
+- **Loop controls** — start/stop autonomous loop, mode toggle (observe/act), interval slider
+- **Provider selector** — auto-detected models in a dropdown; warnings if no tool-capable model found
+- **Memory viewer** — list of saved memories for active profile, with delete buttons
+
 `synapse://guide` is served from `docs/mcp-guide.md`. The LLM should read this resource before taking any actions in a new session.

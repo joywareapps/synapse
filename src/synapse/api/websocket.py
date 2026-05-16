@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from synapse.api.deps import ctx
+from synapse.agent.agent import agent_broadcast_queue
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -34,6 +35,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.debug("WS disconnected: %s", e)
     finally:
         _connections.discard(websocket)
+
+
+@router.websocket("/ws/agent")
+async def websocket_agent(websocket: WebSocket) -> None:
+    """Stream agent messages (text responses + tool calls) as JSON."""
+    await websocket.accept()
+    try:
+        while True:
+            # Block until a message arrives on the broadcast queue
+            try:
+                msg = await asyncio.wait_for(agent_broadcast_queue.get(), timeout=30.0)
+                await websocket.send_text(json.dumps(msg))
+            except asyncio.TimeoutError:
+                # Send a keepalive ping
+                await websocket.send_text(json.dumps({"type": "ping"}))
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.debug("Agent WS disconnected: %s", e)
 
 
 def _build_payload() -> dict[str, Any]:

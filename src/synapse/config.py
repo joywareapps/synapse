@@ -99,6 +99,18 @@ class LoggingConfig:
 
 
 @dataclass
+class AgentConfig:
+    provider: str = "auto"                        # "ollama" | "lm_studio" | "auto"
+    ollama_url: str = "http://localhost:11434"
+    lm_studio_url: str = "http://localhost:1234"
+    model: str = ""                               # empty = first tool-capable model found
+    loop_interval_s: float = 30.0
+    loop_mode: str = "observe"
+    max_tool_calls_per_tick: int = 2
+    system_prompt_extra: str = ""
+
+
+@dataclass
 class Config:
     restim: RestimConfig = field(default_factory=RestimConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
@@ -109,6 +121,7 @@ class Config:
     sessions: SessionsConfig = field(default_factory=SessionsConfig)
     profiles: ProfilesConfig = field(default_factory=ProfilesConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
 
 
 def _set_nested(d: dict, keys: list[str], value: str) -> None:
@@ -256,6 +269,18 @@ def _dict_to_config(data: dict) -> Config:
     logging_data = data.get("logging", {})
     logging_cfg = LoggingConfig(level=logging_data.get("level", "INFO"))
 
+    agent_data = data.get("agent", {})
+    agent_cfg = AgentConfig(
+        provider=agent_data.get("provider", "auto"),
+        ollama_url=agent_data.get("ollama_url", "http://localhost:11434"),
+        lm_studio_url=agent_data.get("lm_studio_url", "http://localhost:1234"),
+        model=agent_data.get("model", ""),
+        loop_interval_s=float(agent_data.get("loop_interval_s", 30.0)),
+        loop_mode=agent_data.get("loop_mode", "observe"),
+        max_tool_calls_per_tick=int(agent_data.get("max_tool_calls_per_tick", 2)),
+        system_prompt_extra=agent_data.get("system_prompt_extra", ""),
+    )
+
     return Config(
         restim=restim,
         engine=engine,
@@ -266,6 +291,7 @@ def _dict_to_config(data: dict) -> Config:
         sessions=sessions,
         profiles=profiles,
         logging=logging_cfg,
+        agent=agent_cfg,
     )
 
 

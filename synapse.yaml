@@ -54,3 +54,13 @@ profiles:
 
 logging:
   level: "INFO"
+
+agent:
+  provider: "auto"
+  ollama_url: "http://localhost:11434"
+  lm_studio_url: "http://localhost:1234"
+  model: ""
+  loop_interval_s: 30
+  loop_mode: "observe"
+  max_tool_calls_per_tick: 2
+  system_prompt_extra: ""

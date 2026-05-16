@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import copy
-import time
+"""MCP server — thin @mcp.tool() wrappers around the shared tool registry."""
+
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from synapse.api.deps import ctx
-from synapse.patterns.models import AxisOscillator, Layer, Pattern, SequenceStep, _auto_name_layers
-from synapse.patterns.player import detect_circular
 from synapse.patterns.store import pattern_to_dict
+import synapse.tools.registry as reg
 
 mcp = FastMCP("Synapse")
 
@@ -19,75 +18,25 @@ mcp = FastMCP("Synapse")
 @mcp.tool()
 async def get_status() -> dict[str, Any]:
     """Get Synapse and Restim status."""
-    uptime = time.monotonic() - ctx.start_time
-    instances = []
-    for inst_id, engine in ctx.engines.items():
-        player = ctx.players.get(inst_id)
-        instances.append({
-            "id": inst_id,
-            "connected": engine.is_connected(),
-            "active_pattern": player.current_pattern().name if player and player.current_pattern() else None,
-            "playing": player.is_playing() if player else False,
-        })
-    return {"status": "ok", "uptime_s": round(uptime, 2), "instances": instances}
+    return await reg.get_status()
 
 
 @mcp.tool()
 async def get_axes() -> list[dict[str, Any]]:
     """List all axes with current values and limits."""
-    values: dict[str, float] = {}
-    for engine in ctx.engines.values():
-        values.update(engine.get_current_values())
-        break
-    return [
-        {
-            "tcode_id": a.tcode_id,
-            "name": a.name,
-            "value_type": a.value_type,
-            "limit_min": a.limit_min,
-            "limit_max": a.limit_max,
-            "enabled": a.enabled,
-            "current_value": values.get(a.tcode_id),
-        }
-        for a in ctx.axis_map.all()
-    ]
+    return await reg.get_axes()
 
 
 @mcp.tool()
 async def get_axis(tcode_id: str) -> dict[str, Any]:
     """Get single axis value and definition."""
-    axis = ctx.axis_map.get_by_id(tcode_id)
-    if not axis:
-        return {"error": f"Axis {tcode_id} not found"}
-    values: dict[str, float] = {}
-    for engine in ctx.engines.values():
-        values.update(engine.get_current_values())
-        break
-    return {
-        "tcode_id": axis.tcode_id,
-        "name": axis.name,
-        "value_type": axis.value_type,
-        "limit_min": axis.limit_min,
-        "limit_max": axis.limit_max,
-        "enabled": axis.enabled,
-        "current_value": values.get(axis.tcode_id),
-    }
+    return await reg.get_axis(tcode_id)
 
 
 @mcp.tool()
 async def get_restim_state() -> dict[str, Any]:
     """Get Restim play state and volume."""
-    states = []
-    for inst_id, client in ctx.restim_clients.items():
-        s = client.get_state()
-        states.append({
-            "instance": inst_id,
-            "playing": s.playing,
-            "volume_ui": s.volume_ui,
-            "volume_device": s.volume_device,
-            "error": s.error,
-        })
-    return {"instances": states}
+    return await reg.get_restim_state()
 
 
 # ── Sensor Readings ───────────────────────────────────────────────────────────
@@ -95,50 +44,27 @@ async def get_restim_state() -> dict[str, Any]:
 @mcp.tool()
 async def get_sensors() -> list[dict[str, Any]]:
     """List all configured sensors with current values and status."""
-    return [
-        {
-            "name": r.name,
-            "value": r.value,
-            "raw": r.raw,
-            "error": r.error,
-            "timestamp": r.timestamp,
-        }
-        for r in ctx.sensor_manager.get_all_with_restim()
-    ]
+    return await reg.get_sensors()
 
 
 @mcp.tool()
 async def get_sensor(name: str) -> dict[str, Any]:
     """Get a specific sensor's value and raw fields."""
-    r = ctx.sensor_manager.get_by_name(name)
-    if r is None:
-        return {"error": f"Sensor '{name}' not found"}
-    return {"name": r.name, "value": r.value, "raw": r.raw, "error": r.error, "timestamp": r.timestamp}
+    return await reg.get_sensor(name)
 
 
 # ── Direct Control ────────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def set_axis(tcode_id: str, value: float) -> dict[str, Any]:
-    """Set axis to a specific normalized value (0.0–1.0)."""
-    axis = ctx.axis_map.get_by_id(tcode_id)
-    if not axis:
-        return {"error": f"Axis {tcode_id} not found"}
-    clamped = max(0.0, min(1.0, value))
-    for engine in ctx.engines.values():
-        engine._current_values[tcode_id] = clamped
-    return {"tcode_id": tcode_id, "value": clamped}
+    """Set axis to a specific normalized value (0.0-1.0)."""
+    return await reg.set_axis(tcode_id, value)
 
 
 @mcp.tool()
 async def set_volume(value: float) -> dict[str, Any]:
-    """Set main volume (0.0–1.0)."""
-    clamped = max(0.0, min(1.0, value))
-    vol_axis = ctx.axis_map.volume_axis()
-    if vol_axis and vol_axis.tcode_id:
-        for engine in ctx.engines.values():
-            engine._current_values[vol_axis.tcode_id] = clamped
-    return {"value": clamped}
+    """Set main volume (0.0-1.0)."""
+    return await reg.set_volume(value)
 
 
 @mcp.tool()
@@ -149,63 +75,25 @@ async def spike(
     repeat: int = 1,
 ) -> dict[str, Any]:
     """Create a brief intensity spike (delta added to current volume)."""
-    from synapse.patterns.models import AxisOscillator, Layer, Pattern
-    attack = on_ms / 1000.0 * 0.2
-    sustain = on_ms / 1000.0 * 0.6
-    release_t = on_ms / 1000.0 * 0.2
-    total = (on_ms + off_ms) * repeat / 1000.0
-
-    spike_pattern = Pattern(
-        name="__spike__",
-        duration=total,
-        layers=[
-            Layer(
-                name="spike",
-                blend="add",
-                axes={
-                    "V0": AxisOscillator(
-                        waveform="hold",
-                        amplitude=intensity,
-                        attack=attack,
-                        sustain=sustain,
-                        release=release_t,
-                    )
-                },
-            )
-        ],
-    )
-    for player in ctx.players.values():
-        await player.play(spike_pattern, duck_amount=0.0, duck_ms=0, ramp_ms=0)
-    return {"status": "ok", "duration_s": total}
+    return await reg.spike(intensity, on_ms, off_ms, repeat)
 
 
 @mcp.tool()
 async def start_playback() -> dict[str, Any]:
     """Start Restim playback."""
-    results = {}
-    for inst_id, client in ctx.restim_clients.items():
-        results[inst_id] = await client.start_playback()
-    return {"results": results}
+    return await reg.start_playback()
 
 
 @mcp.tool()
 async def stop_playback() -> dict[str, Any]:
     """Stop Restim playback."""
-    results = {}
-    for inst_id, client in ctx.restim_clients.items():
-        results[inst_id] = await client.stop_playback()
-    return {"results": results}
+    return await reg.stop_playback()
 
 
 @mcp.tool()
 async def emergency_stop() -> dict[str, Any]:
     """Immediately zero all axes on all instances and stop all patterns."""
-    for player in ctx.players.values():
-        player._playing = False
-        player._pattern = None
-    for engine in ctx.engines.values():
-        await engine.emergency_stop()
-    return {"status": "ok"}
+    return await reg.emergency_stop()
 
 
 # ── Pattern Control ───────────────────────────────────────────────────────────
@@ -213,16 +101,7 @@ async def emergency_stop() -> dict[str, Any]:
 @mcp.tool()
 async def list_patterns() -> list[dict[str, Any]]:
     """List all saved patterns."""
-    result = []
-    for name in ctx.store.list():
-        p = ctx.store.get(name)
-        if p:
-            result.append({
-                "name": p.name,
-                "description": p.description,
-                "is_sequence": p.is_sequence(),
-            })
-    return result
+    return await reg.list_patterns()
 
 
 @mcp.tool()
@@ -234,35 +113,13 @@ async def play_pattern(
     ramp_ms: Optional[int] = None,
 ) -> dict[str, Any]:
     """Start a named pattern on the specified instance."""
-    pattern = ctx.store.get(name)
-    if pattern is None:
-        return {"error": f"Pattern '{name}' not found"}
-    player = ctx.players.get(instance)
-    if player is None:
-        return {"error": f"Instance '{instance}' not found"}
-
-    if pattern.is_sequence() and detect_circular(name, ctx.store.get):
-        return {"error": "Circular sequence reference detected"}
-
-    t = ctx.config.patterns.transition
-    await player.play(
-        pattern,
-        duck_amount=duck_amount if duck_amount is not None else t.duck_amount,
-        duck_ms=duck_ms if duck_ms is not None else t.duck_ms,
-        ramp_ms=ramp_ms if ramp_ms is not None else t.ramp_ms,
-    )
-    return {"status": "playing", "pattern": name, "instance": instance}
+    return await reg.play_pattern(name, instance, duck_amount, duck_ms, ramp_ms)
 
 
 @mcp.tool()
 async def stop_pattern(instance: str = "primary", duck_ms: Optional[int] = None) -> dict[str, Any]:
     """Stop current pattern on the specified instance."""
-    player = ctx.players.get(instance)
-    if player is None:
-        return {"error": f"Instance '{instance}' not found"}
-    t = ctx.config.patterns.transition
-    await player.stop(duck_ms=duck_ms if duck_ms is not None else t.duck_ms)
-    return {"status": "stopped", "instance": instance}
+    return await reg.stop_pattern(instance, duck_ms)
 
 
 @mcp.tool()
@@ -273,11 +130,7 @@ async def create_pattern(
     duration: float = 0.0,
 ) -> dict[str, Any]:
     """Create a new empty leaf pattern."""
-    if ctx.store.exists(name):
-        return {"error": f"Pattern '{name}' already exists"}
-    p = Pattern(name=name, description=description, base_period=base_period, duration=duration)
-    ctx.store.save(p)
-    return {"name": name}
+    return await reg.create_pattern(name, description, base_period, duration)
 
 
 @mcp.tool()
@@ -287,20 +140,13 @@ async def create_sequence(
     loop: bool = False,
 ) -> dict[str, Any]:
     """Create a new empty sequence pattern."""
-    if ctx.store.exists(name):
-        return {"error": f"Pattern '{name}' already exists"}
-    p = Pattern(name=name, description=description, loop=loop)
-    ctx.store._patterns[name] = p
-    return {"name": name}
+    return await reg.create_sequence(name, description, loop)
 
 
 @mcp.tool()
 async def describe_pattern(name: str) -> dict[str, Any]:
     """Get full pattern including layers, axes, and metadata."""
-    p = ctx.store.get(name)
-    if p is None:
-        return {"error": f"Pattern '{name}' not found"}
-    return pattern_to_dict(p)
+    return await reg.describe_pattern(name)
 
 
 @mcp.tool()
@@ -310,33 +156,13 @@ async def snapshot_pattern(
     description: str = "",
 ) -> dict[str, Any]:
     """Save current axis state as a named pattern."""
-    engine = ctx.engines.get(instance)
-    values = engine.get_current_values() if engine else {}
-    layers = [
-        Layer(
-            name="snapshot",
-            blend="set",
-            axes={
-                tid: AxisOscillator(waveform="hold", amplitude=0.0, center=val)
-                for tid, val in values.items()
-            },
-        )
-    ]
-    p = Pattern(
-        name=name,
-        description=description or f"Snapshot from {instance}",
-        layers=layers,
-    )
-    ctx.store.save(p)
-    return {"name": name}
+    return await reg.snapshot_pattern(name, instance, description)
 
 
 @mcp.tool()
 async def delete_pattern(name: str) -> dict[str, Any]:
     """Delete a saved pattern."""
-    if not ctx.store.delete(name):
-        return {"error": f"Pattern '{name}' not found"}
-    return {"status": "deleted", "name": name}
+    return await reg.delete_pattern(name)
 
 
 # ── Pattern Layer CRUD ────────────────────────────────────────────────────────
@@ -344,10 +170,7 @@ async def delete_pattern(name: str) -> dict[str, Any]:
 @mcp.tool()
 async def list_layers(pattern_name: str) -> list[dict[str, Any]]:
     """List layers in a pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return [{"error": f"Pattern '{pattern_name}' not found"}]
-    return [{"name": l.name, "blend": l.blend, "axis_count": len(l.axes)} for l in p.layers]
+    return await reg.list_layers(pattern_name)
 
 
 @mcp.tool()
@@ -358,50 +181,13 @@ async def add_layer(
     instance: Optional[str] = None,
 ) -> dict[str, Any]:
     """Add a new layer to a pattern. Returns the assigned layer name."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    used = {l.name for l in p.layers}
-    if not layer_name:
-        i = 1
-        while f"layer-{i}" in used:
-            i += 1
-        layer_name = f"layer-{i}"
-    elif layer_name in used:
-        return {"error": f"Layer '{layer_name}' already exists"}
-    p.layers.append(Layer(name=layer_name, blend=blend))
-    ctx.store.save(p)
-    return {"layer_name": layer_name}
+    return await reg.add_layer(pattern_name, blend, layer_name, instance)
 
 
 @mcp.tool()
 async def describe_layer(pattern_name: str, layer_name: str) -> dict[str, Any]:
     """Get layer details including blend mode and all axes."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    layer = next((l for l in p.layers if l.name == layer_name), None)
-    if layer is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    return {
-        "name": layer.name,
-        "blend": layer.blend,
-        "axes": {
-            tid: {
-                "waveform": o.waveform,
-                "frequency": o.frequency,
-                "freq_multiple": o.freq_multiple,
-                "amplitude": o.amplitude,
-                "center": o.center,
-                "offset": o.offset,
-                "attack": o.attack,
-                "sustain": o.sustain,
-                "release": o.release,
-            }
-            for tid, o in layer.axes.items()
-        },
-    }
+    return await reg.describe_layer(pattern_name, layer_name)
 
 
 @mcp.tool()
@@ -412,54 +198,19 @@ async def modify_layer(
     new_name: Optional[str] = None,
 ) -> dict[str, Any]:
     """Change a layer's blend mode or name."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    layer = next((l for l in p.layers if l.name == layer_name), None)
-    if layer is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    if blend is not None:
-        layer.blend = blend
-    if new_name is not None:
-        used = {l.name for l in p.layers if l.name != layer_name}
-        if new_name in used:
-            return {"error": f"Layer name '{new_name}' already in use"}
-        layer.name = new_name
-    ctx.store.save(p)
-    return {"layer_name": layer.name}
+    return await reg.modify_layer(pattern_name, layer_name, blend, new_name)
 
 
 @mcp.tool()
 async def remove_layer(pattern_name: str, layer_name: str) -> dict[str, Any]:
     """Remove a layer from a pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    before = len(p.layers)
-    p.layers = [l for l in p.layers if l.name != layer_name]
-    if len(p.layers) == before:
-        return {"error": f"Layer '{layer_name}' not found"}
-    ctx.store.save(p)
-    return {"status": "removed"}
+    return await reg.remove_layer(pattern_name, layer_name)
 
 
 @mcp.tool()
 async def move_layer(pattern_name: str, layer_name: str, index: int) -> dict[str, Any]:
     """Reorder a layer within a pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    idx = next((i for i, l in enumerate(p.layers) if l.name == layer_name), None)
-    if idx is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    layer = p.layers.pop(idx)
-    new_idx = max(0, min(index, len(p.layers)))
-    p.layers.insert(new_idx, layer)
-    ctx.store.save(p)
-    return {"index": new_idx}
+    return await reg.move_layer(pattern_name, layer_name, index)
 
 
 # ── Layer Axis CRUD ───────────────────────────────────────────────────────────
@@ -480,28 +231,10 @@ async def set_layer_axis(
     release: float = 0.0,
 ) -> dict[str, Any]:
     """Add or fully replace an axis oscillator in a layer."""
-    if frequency is not None and freq_multiple is not None:
-        return {"error": "frequency and freq_multiple are mutually exclusive"}
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    layer = next((l for l in p.layers if l.name == layer_name), None)
-    if layer is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    layer.axes[tcode_id] = AxisOscillator(
-        waveform=waveform,
-        frequency=frequency,
-        freq_multiple=freq_multiple,
-        amplitude=amplitude,
-        center=center,
-        offset=offset,
-        attack=attack,
-        sustain=sustain,
-        release=release,
+    return await reg.set_layer_axis(
+        pattern_name, layer_name, tcode_id, waveform, amplitude, center, offset,
+        frequency, freq_multiple, attack, sustain, release,
     )
-    ctx.store.save(p)
-    return {"tcode_id": tcode_id}
 
 
 @mcp.tool()
@@ -520,55 +253,16 @@ async def modify_layer_axis(
     release: Optional[float] = None,
 ) -> dict[str, Any]:
     """Partial update of an axis oscillator."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    layer = next((l for l in p.layers if l.name == layer_name), None)
-    if layer is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    if tcode_id not in layer.axes:
-        return {"error": f"Axis '{tcode_id}' not in layer"}
-    o = layer.axes[tcode_id]
-    if waveform is not None:
-        o.waveform = waveform
-    if frequency is not None:
-        o.frequency = frequency
-        o.freq_multiple = None
-    if freq_multiple is not None:
-        o.freq_multiple = freq_multiple
-        o.frequency = None
-    if amplitude is not None:
-        o.amplitude = amplitude
-    if center is not None:
-        o.center = center
-    if offset is not None:
-        o.offset = offset
-    if attack is not None:
-        o.attack = attack
-    if sustain is not None:
-        o.sustain = sustain
-    if release is not None:
-        o.release = release
-    ctx.store.save(p)
-    return {"tcode_id": tcode_id}
+    return await reg.modify_layer_axis(
+        pattern_name, layer_name, tcode_id, waveform, amplitude, center, offset,
+        frequency, freq_multiple, attack, sustain, release,
+    )
 
 
 @mcp.tool()
 async def remove_layer_axis(pattern_name: str, layer_name: str, tcode_id: str) -> dict[str, Any]:
     """Remove an axis from a layer."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    p = copy.deepcopy(p)
-    layer = next((l for l in p.layers if l.name == layer_name), None)
-    if layer is None:
-        return {"error": f"Layer '{layer_name}' not found"}
-    if tcode_id not in layer.axes:
-        return {"error": f"Axis '{tcode_id}' not in layer"}
-    del layer.axes[tcode_id]
-    ctx.store.save(p)
-    return {"status": "removed"}
+    return await reg.remove_layer_axis(pattern_name, layer_name, tcode_id)
 
 
 # ── Sequence Step CRUD ────────────────────────────────────────────────────────
@@ -576,19 +270,7 @@ async def remove_layer_axis(pattern_name: str, layer_name: str, tcode_id: str) -
 @mcp.tool()
 async def list_steps(pattern_name: str) -> list[dict[str, Any]]:
     """List steps in a sequence pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return [{"error": f"Pattern '{pattern_name}' not found"}]
-    return [
-        {
-            "index": i,
-            "pattern": s.pattern,
-            "duration": s.duration,
-            "repeat": s.repeat,
-            "transition": s.transition,
-        }
-        for i, s in enumerate(p.steps)
-    ]
+    return await reg.list_steps(pattern_name)
 
 
 @mcp.tool()
@@ -600,15 +282,7 @@ async def add_step(
     transition: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Append a step to a sequence pattern. Returns step index."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    if p.layers:
-        return {"error": "Cannot add steps to a leaf pattern"}
-    p = copy.deepcopy(p)
-    p.steps.append(SequenceStep(pattern=step_pattern, duration=duration, repeat=repeat, transition=transition))
-    ctx.store.save(p)
-    return {"index": len(p.steps) - 1}
+    return await reg.add_step(pattern_name, step_pattern, duration, repeat, transition)
 
 
 @mcp.tool()
@@ -621,53 +295,19 @@ async def modify_step(
     transition: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Update a sequence step."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    if step_index < 0 or step_index >= len(p.steps):
-        return {"error": f"Step {step_index} not found"}
-    p = copy.deepcopy(p)
-    s = p.steps[step_index]
-    if step_pattern is not None:
-        s.pattern = step_pattern
-    if duration is not None:
-        s.duration = duration
-    if repeat is not None:
-        s.repeat = repeat
-    if transition is not None:
-        s.transition = transition
-    ctx.store.save(p)
-    return {"index": step_index}
+    return await reg.modify_step(pattern_name, step_index, step_pattern, duration, repeat, transition)
 
 
 @mcp.tool()
 async def remove_step(pattern_name: str, step_index: int) -> dict[str, Any]:
     """Remove a step by index from a sequence pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    if step_index < 0 or step_index >= len(p.steps):
-        return {"error": f"Step {step_index} not found"}
-    p = copy.deepcopy(p)
-    p.steps.pop(step_index)
-    ctx.store.save(p)
-    return {"status": "removed"}
+    return await reg.remove_step(pattern_name, step_index)
 
 
 @mcp.tool()
 async def move_step(pattern_name: str, step_index: int, new_index: int) -> dict[str, Any]:
     """Reorder a step in a sequence pattern."""
-    p = ctx.store.get(pattern_name)
-    if p is None:
-        return {"error": f"Pattern '{pattern_name}' not found"}
-    if step_index < 0 or step_index >= len(p.steps):
-        return {"error": f"Step {step_index} not found"}
-    p = copy.deepcopy(p)
-    step = p.steps.pop(step_index)
-    new_idx = max(0, min(new_index, len(p.steps)))
-    p.steps.insert(new_idx, step)
-    ctx.store.save(p)
-    return {"index": new_idx}
+    return await reg.move_step(pattern_name, step_index, new_index)
 
 
 # ── Session Recording ─────────────────────────────────────────────────────────
@@ -675,26 +315,19 @@ async def move_step(pattern_name: str, step_index: int, new_index: int) -> dict[
 @mcp.tool()
 async def start_session(name: str, instance: str = "primary") -> dict[str, Any]:
     """Start recording all axis outputs to funscript files."""
-    from datetime import datetime, timezone
-    session_name = name or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    axis_ids = [a.tcode_id for a in ctx.axis_map.all_enabled()]
-    ctx.session_manager.start_session(session_name, instance, axis_ids)
-    return {"status": "recording", "name": session_name, "instance": instance}
+    return await reg.start_session(name, instance)
 
 
 @mcp.tool()
 async def stop_session(instance: str = "primary") -> dict[str, Any]:
     """Stop recording and flush funscript files. Returns session metadata."""
-    meta = ctx.session_manager.stop_session(instance)
-    if meta is None:
-        return {"error": f"No active session for instance '{instance}'"}
-    return meta.to_dict()
+    return await reg.stop_session(instance)
 
 
 @mcp.tool()
 async def list_sessions() -> list[dict[str, Any]]:
     """List all recorded sessions."""
-    return [m.to_dict() for m in ctx.session_manager.list_sessions()]
+    return await reg.list_sessions()
 
 
 # ── User Profiles ─────────────────────────────────────────────────────────────
@@ -702,16 +335,13 @@ async def list_sessions() -> list[dict[str, Any]]:
 @mcp.tool()
 async def list_profiles() -> list[dict[str, Any]]:
     """List all user profiles."""
-    return [p.to_dict() for p in ctx.profile_store.list()]
+    return await reg.list_profiles()
 
 
 @mcp.tool()
 async def get_profile(name: str) -> dict[str, Any]:
     """Get a user profile by name."""
-    profile = ctx.profile_store.get(name)
-    if profile is None:
-        return {"error": f"Profile '{name}' not found"}
-    return profile.to_dict()
+    return await reg.get_profile(name)
 
 
 @mcp.tool()
@@ -727,28 +357,10 @@ async def update_profile(
     tags: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Partially update a user profile. Only provided fields are changed."""
-    kwargs: dict[str, Any] = {}
-    if preferred_volume_range is not None:
-        kwargs["preferred_volume_range"] = preferred_volume_range
-    if preferred_patterns is not None:
-        kwargs["preferred_patterns"] = preferred_patterns
-    if disliked_patterns is not None:
-        kwargs["disliked_patterns"] = disliked_patterns
-    if preferred_carrier_hz is not None:
-        kwargs["preferred_carrier_hz"] = preferred_carrier_hz
-    if preferred_pulse_hz is not None:
-        kwargs["preferred_pulse_hz"] = preferred_pulse_hz
-    if preferred_base_period_s is not None:
-        kwargs["preferred_base_period_s"] = preferred_base_period_s
-    if notes is not None:
-        kwargs["notes"] = notes
-    if tags is not None:
-        kwargs["tags"] = tags
-
-    profile = ctx.profile_store.update(name, **kwargs)
-    if profile is None:
-        return {"error": f"Profile '{name}' not found"}
-    return profile.to_dict()
+    return await reg.update_profile(
+        name, preferred_volume_range, preferred_patterns, disliked_patterns,
+        preferred_carrier_hz, preferred_pulse_hz, preferred_base_period_s, notes, tags,
+    )
 
 
 # ── Exploration & A/B Testing ─────────────────────────────────────────────────
@@ -761,17 +373,7 @@ async def start_ab_test(
     option_b: dict,
 ) -> dict[str, Any]:
     """Record start of an A/B test. Returns test_id."""
-    from synapse.profiles.models import ABTestResult
-    profile = ctx.profile_store.get(profile_name)
-    if profile is None:
-        return {"error": f"Profile '{profile_name}' not found"}
-
-    test = ABTestResult.new(variable=variable, option_a=option_a, option_b=option_b)
-    if "ab_tests" not in profile.tags:
-        profile.tags["ab_tests"] = []
-    profile.tags["ab_tests"].append(test.to_dict())
-    ctx.profile_store.save(profile)
-    return {"test_id": test.test_id, "variable": variable}
+    return await reg.start_ab_test(profile_name, variable, option_a, option_b)
 
 
 @mcp.tool()
@@ -782,78 +384,49 @@ async def record_ab_result(
     notes: str = "",
 ) -> dict[str, Any]:
     """Record winner of an A/B test and save to profile."""
-    profile = ctx.profile_store.get(profile_name)
-    if profile is None:
-        return {"error": f"Profile '{profile_name}' not found"}
-
-    ab_tests = profile.tags.get("ab_tests", [])
-    for test_dict in ab_tests:
-        if test_dict.get("test_id") == test_id:
-            test_dict["winner"] = winner
-            test_dict["notes"] = notes
-            profile.tags["ab_tests"] = ab_tests
-            ctx.profile_store.save(profile)
-            return {"status": "recorded", "test_id": test_id, "winner": winner}
-    return {"error": f"Test '{test_id}' not found in profile '{profile_name}'"}
-
-
-_EXPLORATION_ORDER = [
-    "volume_range",
-    "carrier_freq",
-    "pulse_freq",
-    "base_period",
-    "spatial_motion",
-    "pattern_complexity",
-]
+    return await reg.record_ab_result(profile_name, test_id, winner, notes)
 
 
 @mcp.tool()
 async def get_exploration_summary(profile_name: str) -> dict[str, Any]:
     """Return discovered preferences and recommended next A/B test variable."""
-    profile = ctx.profile_store.get(profile_name)
-    if profile is None:
-        return {"error": f"Profile '{profile_name}' not found"}
+    return await reg.get_exploration_summary(profile_name)
 
-    ab_tests = profile.tags.get("ab_tests", [])
 
-    # Count results per variable
-    tested: dict[str, list[dict]] = {}
-    for test in ab_tests:
-        var = test.get("variable", "unknown")
-        tested.setdefault(var, []).append(test)
+# ── Memory Tools ──────────────────────────────────────────────────────────────
 
-    # Summarise what we know
-    summary: dict[str, Any] = {}
-    for var, results in tested.items():
-        winners = [r["winner"] for r in results if r.get("winner")]
-        a_wins = winners.count("a")
-        b_wins = winners.count("b")
-        # Determine preferred option from majority
-        preferred_option = None
-        if a_wins > b_wins:
-            preferred_option = results[-1].get("option_a") if results else None
-        elif b_wins > a_wins:
-            preferred_option = results[-1].get("option_b") if results else None
-        summary[var] = {
-            "test_count": len(results),
-            "a_wins": a_wins,
-            "b_wins": b_wins,
-            "preferred_option": preferred_option,
-        }
+@mcp.tool()
+async def remember(
+    text: str,
+    category: str = "general",
+    session_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Save a memory to the active profile. Use for anything worth knowing in future sessions: preferences, reactions, things to try."""
+    return await reg.remember(text, category, session_name)
 
-    # Suggest next variable to test
-    next_variable = None
-    for var in _EXPLORATION_ORDER:
-        if var not in tested:
-            next_variable = var
-            break
 
-    return {
-        "profile": profile_name,
-        "tested_variables": summary,
-        "next_recommended_variable": next_variable,
-        "exploration_complete": next_variable is None,
-    }
+@mcp.tool()
+async def recall(query: str = "") -> list[dict[str, Any]]:
+    """List memories from the active profile. Pass query to filter by text."""
+    return await reg.recall(query)
+
+
+@mcp.tool()
+async def note_observation(text: str) -> dict[str, Any]:
+    """Save a session-scoped observation to the current session metadata."""
+    return await reg.note_observation(text)
+
+
+@mcp.tool()
+async def forget(memory_id: str) -> dict[str, Any]:
+    """Remove a memory by ID from the active profile."""
+    return await reg.forget(memory_id)
+
+
+@mcp.tool()
+async def set_active_profile(name: str) -> dict[str, Any]:
+    """Set the active profile for memory operations."""
+    return await reg.set_active_profile(name)
 
 
 # ── MCP Resources ─────────────────────────────────────────────────────────────
@@ -861,21 +434,21 @@ async def get_exploration_summary(profile_name: str) -> dict[str, Any]:
 @mcp.resource("synapse://status")
 async def resource_status() -> str:
     import json
-    result = await get_status()
+    result = await reg.get_status()
     return json.dumps(result, indent=2)
 
 
 @mcp.resource("synapse://axes")
 async def resource_axes() -> str:
     import json
-    result = await get_axes()
+    result = await reg.get_axes()
     return json.dumps(result, indent=2)
 
 
 @mcp.resource("synapse://patterns")
 async def resource_patterns() -> str:
     import json
-    result = await list_patterns()
+    result = await reg.list_patterns()
     return json.dumps(result, indent=2)
 
 
@@ -892,7 +465,6 @@ async def resource_pattern(name: str) -> str:
 async def get_guide() -> str:
     """Operational guide for LLM. Read this before any session."""
     import pathlib
-    # Walk up from this file to find docs/mcp-guide.md
     here = pathlib.Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / "docs" / "mcp-guide.md"
