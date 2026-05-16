@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from synapse.api.routes_state import router as state_router
 from synapse.api.routes_control import router as control_router
+from synapse.api.routes_config import router as config_router
 from synapse.api.routes_patterns import router as patterns_router
 from synapse.api.routes_sessions import router as sessions_router
 from synapse.api.routes_profiles import router as profiles_router
@@ -44,7 +45,9 @@ def create_app(
 
     # setup_router must come before state_router so /api/sensors/ble-scan is
     # matched before the parameterised /api/sensors/{name} route.
+    # config_router before state_router to avoid param route conflicts.
     app.include_router(setup_router)
+    app.include_router(config_router)
     app.include_router(state_router)
     app.include_router(control_router)
     app.include_router(patterns_router)

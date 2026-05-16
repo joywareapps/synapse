@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 class AppContext:
     config: "Config"
+    config_path: "Optional[str]" = None
     axis_map: "AxisMap"
     engines: "dict[str, TCodeEngine]"
     players: "dict[str, PatternPlayer]"

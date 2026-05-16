@@ -112,37 +112,3 @@ async def restim_stop() -> dict[str, Any]:
     return {"results": results}
 
 
-@router.post("/api/config/reload")
-async def config_reload() -> dict[str, Any]:
-    return {"status": "reload not implemented in runtime — restart to reload config"}
-
-
-@router.post("/api/config/reload-ini")
-async def config_reload_ini() -> dict[str, Any]:
-    from pathlib import Path
-    from synapse.ini_parser import parse_ini_file
-    ini_path = ctx.config.restim.ini_path
-    if not Path(ini_path).exists():
-        raise HTTPException(status_code=404, detail="INI file not found")
-    axes = parse_ini_file(ini_path)
-    ctx.axis_map.apply_ini(axes)
-    return {"status": "ok", "axes_loaded": len(axes)}
-
-
-@router.post("/api/config/upload-ini")
-async def upload_ini(file: bytes) -> dict[str, Any]:
-    from synapse.ini_parser import parse_ini
-    axes = parse_ini(file.decode())
-    ctx.axis_map.apply_ini(axes)
-    return {
-        "status": "ok",
-        "axes": {
-            name: {
-                "tcode_id": a.tcode_id,
-                "limit_min": a.limit_min,
-                "limit_max": a.limit_max,
-                "enabled": a.enabled,
-            }
-            for name, a in axes.items()
-        },
-    }

@@ -91,6 +91,7 @@ async def _run(config_path: Optional[str] = None) -> None:
 
     # Populate shared context
     ctx.config = config
+    ctx.config_path = config_path
     ctx.axis_map = axis_map
     ctx.engines = engines
     ctx.players = players
@@ -124,7 +125,12 @@ async def _run(config_path: Optional[str] = None) -> None:
 
     # FastAPI
     from synapse.api.app import create_app
-    web_dir = "web" if Path("web").exists() else None
+    # Prefer local dev ./web/, fall back to the installed package's web assets
+    if Path("web").exists():
+        web_dir = "web"
+    else:
+        _pkg_web = Path(__file__).parent / "web"
+        web_dir = str(_pkg_web) if _pkg_web.exists() else None
     app = create_app(auth_key=config.api.auth_key, web_dir=web_dir)
 
     uvicorn_config = uvicorn.Config(

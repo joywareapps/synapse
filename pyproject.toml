@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # Install via: pip install joyware-synapse
 # The CLI command and Python package remain "synapse".
 name = "joyware-synapse"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bridge Restim e-stim devices to LLMs via MCP, REST API, and a web UI"
 readme = "README.md"
 license = { text = "MIT" }
@@ -51,6 +51,9 @@ synapse = "synapse.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+synapse = ["web/**/*", "web/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
