@@ -142,16 +142,17 @@ async def _run(config_path: Optional[str] = None) -> None:
         from synapse.mcp.server import mcp
         mcp_host = "127.0.0.1" if config.mcp.localhost_only else "0.0.0.0"
         if config.mcp.transport == "stdio":
-            # Support both old run_async() and new run_stdio_async() API
-            runner = getattr(mcp, "run_stdio_async", None) or mcp.run_async
+            runner = getattr(mcp, "run_stdio_async", None) or getattr(mcp, "run_async", None)
             mcp_task = asyncio.create_task(runner())
         else:
-            # SSE — support both old run_async(transport=...) and new run_sse_async()
             if hasattr(mcp, "run_sse_async"):
-                mcp_task = asyncio.create_task(
-                    mcp.run_sse_async(host=mcp_host, port=config.mcp.port)
-                )
+                # New API (mcp >= 1.x): host/port are set on mcp.settings
+                if hasattr(mcp, "settings"):
+                    mcp.settings.host = mcp_host
+                    mcp.settings.port = config.mcp.port
+                mcp_task = asyncio.create_task(mcp.run_sse_async())
             else:
+                # Old API
                 mcp_task = asyncio.create_task(
                     mcp.run_async(transport="sse", host=mcp_host, port=config.mcp.port)
                 )
