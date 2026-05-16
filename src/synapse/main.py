@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -186,6 +187,22 @@ async def _run(config_path: Optional[str] = None) -> None:
 
 
 def main() -> None:
+    # Quick check for `synapse init` before full argparse so we can give it its
+    # own --output flag without clashing with the run-mode --config flag.
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        init_parser = argparse.ArgumentParser(
+            prog="synapse init",
+            description="Interactive setup wizard — creates a synapse.yaml",
+        )
+        init_parser.add_argument(
+            "--output", default="synapse.yaml", metavar="FILE",
+            help="Path to write the generated config (default: synapse.yaml)",
+        )
+        init_args = init_parser.parse_args(sys.argv[2:])
+        from synapse.setup.wizard import run_wizard
+        run_wizard(init_args.output)
+        return
+
     parser = argparse.ArgumentParser(description="Synapse — Restim bridge service")
     parser.add_argument("--config", default=None, help="Path to synapse.yaml")
     args = parser.parse_args()

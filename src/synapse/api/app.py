@@ -13,6 +13,7 @@ from synapse.api.routes_patterns import router as patterns_router
 from synapse.api.routes_sessions import router as sessions_router
 from synapse.api.routes_profiles import router as profiles_router
 from synapse.api.routes_agent import router as agent_router
+from synapse.api.routes_setup import router as setup_router
 from synapse.api.websocket import router as ws_router
 
 
@@ -41,6 +42,9 @@ def create_app(
                 return Response(status_code=401, content="Unauthorized")
             return await call_next(request)
 
+    # setup_router must come before state_router so /api/sensors/ble-scan is
+    # matched before the parameterised /api/sensors/{name} route.
+    app.include_router(setup_router)
     app.include_router(state_router)
     app.include_router(control_router)
     app.include_router(patterns_router)

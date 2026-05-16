@@ -23,6 +23,47 @@ LLM (Claude, etc.)
       (port 12347)       (port 12348)
 ```
 
+## Setup wizard
+
+The fastest way to get a working config:
+
+```bash
+synapse init
+```
+
+This probes for a running Restim instance, searches common OS locations for `restim.ini`, lists detected Ollama/LM Studio models so you can pick one, optionally scans for BLE heart rate devices, and writes a ready-to-use `synapse.yaml`.
+
+```
+Synapse setup wizard
+==========================================
+Restim connection
+--------------------
+  ✓ Restim found (TCode :12347, REST :12348)
+
+Axis configuration (restim.ini)
+--------------------
+  Found: /home/user/.config/Restim/restim.ini
+  Use this path? [Y/n]:
+
+Embedded agent (LLM)
+--------------------
+  ✓ ollama at http://localhost:11434
+      Models: llama3.1, phi4, mistral
+      Tool-capable: llama3.1, phi4, mistral
+  Default model for agent [llama3.1]:
+
+Sensors (optional)
+--------------------
+  Enable heart rate sensor (BLE)? [y/N]:
+  Enable AS5311 position sensor? [y/N]:
+
+  Write config to [synapse.yaml]:
+✓ Config written to synapse.yaml
+  Run: synapse --config synapse.yaml
+```
+
+To write to a different path: `synapse init --output my-setup.yaml`
+
 ## Prerequisites
 
 - **Restim** — the e-stim control app. Must be running before Synapse starts.
@@ -248,6 +289,37 @@ POST /api/agent/loop/stop           # stop loop
 GET  /api/agent/loop/status         # loop state + tick count
 WS   /ws/agent                      # stream tool calls and agent messages
 ```
+
+## Diagnostics
+
+### Health check
+
+Validate the running configuration — checks Restim connectivity, INI path, LLM providers, and sensor states:
+
+```bash
+curl http://localhost:8080/api/setup/check
+```
+
+```json
+{
+  "ok": false,
+  "restim": [{"id": "primary", "tcode_reachable": true, "rest_reachable": true, ...}],
+  "ini": {"path": "./restim.ini", "exists": true},
+  "llm_providers": [{"name": "ollama", "models": ["llama3.1"], ...}],
+  "sensors": []
+}
+```
+
+### BLE device scan
+
+Find the address of a BLE heart rate monitor to put in `synapse.yaml`:
+
+```bash
+curl http://localhost:8080/api/sensors/ble-scan
+# [{"name": "Polar H10", "address": "AA:BB:CC:DD:EE:FF"}, ...]
+```
+
+Takes ~5 seconds. Requires Bluetooth access (may need elevated permissions on Linux).
 
 ## Safety
 
