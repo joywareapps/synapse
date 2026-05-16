@@ -73,8 +73,23 @@ def _build_payload() -> dict[str, Any]:
     except Exception:
         pass
 
+    instances = []
+    for inst_id, engine in ctx.engines.items():
+        player = ctx.players.get(inst_id)
+        restim = ctx.restim_clients.get(inst_id)
+        state = restim.get_state() if restim else None
+        instances.append({
+            "id": inst_id,
+            "connected": engine.is_connected(),
+            "active_pattern": player.current_pattern().name if player and player.current_pattern() else None,
+            "playing": player.is_playing() if player else False,
+            "restim_playing": state.playing if state else False,
+            "restim_error": state.error if state else None,
+        })
+
     return {
         "t": time.time(),
         "axes": axes,
         "sensors": sensors,
+        "instances": instances,
     }
