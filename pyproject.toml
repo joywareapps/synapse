@@ -3,10 +3,27 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "synapse"
+# PyPI name — "synapse" is taken by the Matrix homeserver.
+# Install via: pip install joyware-synapse
+# The CLI command and Python package remain "synapse".
+name = "joyware-synapse"
 version = "0.1.0"
-description = "Bridge Restim devices to MCP, REST API, and web UI"
+description = "Bridge Restim e-stim devices to LLMs via MCP, REST API, and a web UI"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
+keywords = ["restim", "estim", "tcode", "mcp", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/joywareapps/synapse"
+Repository = "https://github.com/joywareapps/synapse"
+"Bug Tracker" = "https://github.com/joywareapps/synapse/issues"
+
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.29.0",
@@ -19,6 +36,7 @@ dependencies = [
     "pydantic>=2.0",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +44,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    "build>=1.0",
 ]
 
 [project.scripts]

@@ -23,6 +23,43 @@ LLM (Claude, etc.)
       (port 12347)       (port 12348)
 ```
 
+## Installation
+
+### Option A — pip from GitHub release (recommended for end users)
+
+Go to the [Releases page](https://github.com/joywareapps/synapse/releases), copy the `.whl` link from the latest release, and install it:
+
+```bash
+pip install https://github.com/joywareapps/synapse/releases/download/v0.1.0/joyware_synapse-0.1.0-py3-none-any.whl
+```
+
+Or install the latest release directly with pip:
+
+```bash
+pip install "joyware-synapse @ https://github.com/joywareapps/synapse/releases/latest/download/joyware_synapse-0.1.0-py3-none-any.whl"
+```
+
+### Option B — pip from source (for developers)
+
+```bash
+git clone https://github.com/joywareapps/synapse.git
+cd synapse
+pip install -e ".[dev]"
+```
+
+After either option, the `synapse` command is available:
+
+```bash
+synapse --help
+synapse init        # interactive setup wizard
+synapse --config synapse.yaml
+```
+
+> **Note**: the PyPI package name is `joyware-synapse` because `synapse` is taken.
+> The CLI command and Python import path are still `synapse`.
+
+---
+
 ## Setup wizard
 
 The fastest way to get a working config:
@@ -67,21 +104,20 @@ To write to a different path: `synapse init --output my-setup.yaml`
 ## Prerequisites
 
 - **Restim** — the e-stim control app. Must be running before Synapse starts.
-- **Python 3.11+**
+- **Python 3.10+**
 - Optional: Ollama or LM Studio for the embedded local LLM agent.
 
 ## Quick Start
 
 ```bash
-# Install
-pip install -e .
+# 1. Install (see Installation section below for all options)
+pip install -e .          # from source, or download a release wheel
 
-# Configure
-cp synapse.yaml my-synapse.yaml
-# Edit my-synapse.yaml — at minimum set restim.ini_path
+# 2. Generate config interactively
+synapse init              # probes Restim, finds restim.ini, picks LLM model
 
-# Run
-synapse --config my-synapse.yaml
+# 3. Run
+synapse --config synapse.yaml
 ```
 
 Web UI: http://localhost:8080  
