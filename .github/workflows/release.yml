@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for git log between tags
 
       - uses: actions/setup-python@v5
         with:
@@ -28,11 +30,35 @@ jobs:
       - name: Show artifacts
         run: ls -lh dist/
 
+      - name: Generate release notes from git log
+        id: notes
+        run: |
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          # Find the previous tag (skip the one we just pushed)
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+
+          {
+            echo "body<<RELEASE_EOF"
+
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changes since ${PREV_TAG}"
+              echo ""
+              git log --no-merges --pretty=format:"- %s" "${PREV_TAG}..HEAD"
+            else
+              echo "## Initial release"
+              echo ""
+              git log --no-merges --pretty=format:"- %s" HEAD
+            fi
+
+            echo ""
+            echo "RELEASE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
           fail_on_unmatched_files: true
 
       # ── Optional: publish to PyPI ─────────────────────────────────────────
