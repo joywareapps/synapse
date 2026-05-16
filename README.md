@@ -23,15 +23,21 @@ LLM (Claude, etc.)
       (port 12347)       (port 12348)
 ```
 
+## Prerequisites
+
+- **Restim** — the e-stim control app. Must be running before Synapse starts.
+- **Python 3.11+**
+- Optional: Ollama or LM Studio for the embedded local LLM agent.
+
 ## Quick Start
 
 ```bash
 # Install
 pip install -e .
 
-# Configure (copy and edit)
+# Configure
 cp synapse.yaml my-synapse.yaml
-# Set restim.ini_path if you want axis limits from your device config
+# Edit my-synapse.yaml — at minimum set restim.ini_path
 
 # Run
 synapse --config my-synapse.yaml
@@ -84,6 +90,22 @@ patterns:
     duck_amount: 1.0              # 1.0 = silence gap between patterns
     duck_ms: 200
     ramp_ms: 400
+
+sessions:
+  directory: "./sessions"         # funscript output directory
+
+profiles:
+  directory: "./profiles"         # user profile YAML files
+
+agent:
+  provider: "auto"                # "auto" probes Ollama then LM Studio
+  ollama_url: "http://localhost:11434"
+  lm_studio_url: "http://localhost:1234"
+  model: ""                       # leave blank to auto-pick first tool-capable model
+  loop_interval_s: 30             # autonomous loop tick interval
+  loop_mode: "observe"            # "observe" (read-only) or "act" (full tool access)
+  max_tool_calls_per_tick: 2
+  system_prompt_extra: ""         # appended to the system prompt every call
 ```
 
 All values can be overridden with environment variables:
@@ -162,6 +184,71 @@ Or for stdio (local only):
 
 See [docs/mcp-guide.md](docs/mcp-guide.md) for the operational guide the LLM uses when controlling the device.
 
+## Embedded Agent
+
+Synapse can run a local LLM that controls the device autonomously and learns user preferences across sessions.
+
+### Setup
+
+1. Install [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and pull a tool-capable model:
+   ```bash
+   # Ollama
+   ollama pull llama3.1
+   # or LM Studio — download a model via the UI
+   ```
+
+2. Synapse auto-detects running providers at startup. Check what's available:
+   ```bash
+   curl http://localhost:8080/api/agent/providers
+   ```
+
+3. Start a chat session (picks the first tool-capable model automatically):
+   ```bash
+   curl -X POST http://localhost:8080/api/agent/chat \
+     -H 'Content-Type: application/json' \
+     -d '{"message": "Start a gentle session", "profile_name": "default"}'
+   ```
+
+4. Or start the autonomous loop (polls every 30 s, read-only by default):
+   ```bash
+   curl -X POST http://localhost:8080/api/agent/loop/start \
+     -H 'Content-Type: application/json' \
+     -d '{"mode": "observe", "profile_name": "default"}'
+   ```
+
+### Memory
+
+The agent persists what it learns about user preferences inside the user profile. You can also call these as MCP tools:
+
+| Tool | Purpose |
+|------|---------|
+| `remember(text, category)` | Save a preference or observation for future sessions |
+| `recall(query)` | List saved memories, optionally filtered |
+| `note_observation(text)` | In-session observation (not persisted to profile) |
+| `forget(memory_id)` | Remove a memory by ID |
+
+Categories: `preference`, `reaction`, `observation`, `todo`, `general`.
+
+### Autonomous loop modes
+
+| Mode | What the agent can do |
+|------|-----------------------|
+| `observe` | Read-only: check sensors, recall memories, note observations |
+| `act` | Full tool access: play patterns, adjust volume, save memories |
+
+### Agent REST API
+
+```
+GET  /api/agent/providers           # list detected LLM providers + models
+POST /api/agent/chat                # send a message, get response
+GET  /api/agent/history             # conversation history
+DELETE /api/agent/history           # clear history
+POST /api/agent/loop/start          # start autonomous loop
+POST /api/agent/loop/stop           # stop loop
+GET  /api/agent/loop/status         # loop state + tick count
+WS   /ws/agent                      # stream tool calls and agent messages
+```
+
 ## Safety
 
 - **Emergency stop**: `POST /api/emergency-stop` — zeroes all axes immediately
@@ -224,6 +311,8 @@ src/synapse/
 ├── tcode.py          # TCode protocol formatting
 ├── engine.py         # 50Hz TCode output loop
 ├── restim_client.py  # Restim HTTP API client
+├── tools/
+│   └── registry.py   # shared tool functions (used by MCP + agent)
 ├── patterns/
 │   ├── models.py     # AxisOscillator, Layer, Pattern, SequenceStep
 │   ├── store.py      # YAML pattern library
@@ -233,12 +322,28 @@ src/synapse/
 │   ├── manager.py    # sensor lifecycle
 │   ├── as5311.py     # AS5311 WebSocket reader
 │   └── heart_rate.py # BLE HR reader
+├── sessions/
+│   ├── models.py     # SessionMeta
+│   ├── recorder.py   # per-tick axis → funscript buffer
+│   └── manager.py    # session lifecycle
+├── profiles/
+│   ├── models.py     # UserProfile, Memory, ABTestResult
+│   └── store.py      # YAML profile persistence + memory CRUD
+├── agent/
+│   ├── llm_client.py # Ollama/LM Studio auto-detection + chat client
+│   ├── tool_dispatch.py # OpenAI tool schema builder + dispatcher
+│   ├── agent.py      # SynapseAgent: system prompt, chat loop
+│   └── loop.py       # AgentLoop: autonomous observe/act loop
 ├── api/
 │   ├── app.py        # FastAPI app factory
+│   ├── deps.py       # shared AppContext singleton
 │   ├── routes_state.py
 │   ├── routes_control.py
 │   ├── routes_patterns.py
-│   └── websocket.py  # live axis + sensor push
+│   ├── routes_sessions.py
+│   ├── routes_profiles.py
+│   ├── routes_agent.py
+│   └── websocket.py  # live axis/sensor push + agent stream
 └── mcp/
-    └── server.py     # MCP tool definitions
+    └── server.py     # MCP tool wrappers (@mcp.tool)
 ```
