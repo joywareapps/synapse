@@ -27,16 +27,16 @@ LLM (Claude, etc.)
 
 ### Option A — pip from GitHub release (recommended for end users)
 
-Go to the [Releases page](https://github.com/joywareapps/synapse/releases), copy the `.whl` link from the latest release, and install it:
+Install or upgrade to the latest release with a single fixed URL — no version number to update:
 
 ```bash
-pip install https://github.com/joywareapps/synapse/releases/download/v0.1.0/joyware_synapse-0.1.0-py3-none-any.whl
+pip install "joyware-synapse @ https://github.com/joywareapps/synapse/releases/latest/download/joyware_synapse-latest-py3-none-any.whl"
 ```
 
-Or install the latest release directly with pip:
+To upgrade an existing install:
 
 ```bash
-pip install "joyware-synapse @ https://github.com/joywareapps/synapse/releases/latest/download/joyware_synapse-0.1.0-py3-none-any.whl"
+pip install --upgrade "joyware-synapse @ https://github.com/joywareapps/synapse/releases/latest/download/joyware_synapse-latest-py3-none-any.whl"
 ```
 
 ### Option B — pip from source (for developers)

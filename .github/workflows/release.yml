@@ -30,6 +30,9 @@ jobs:
       - name: Show artifacts
         run: ls -lh dist/
 
+      - name: Create fixed-name latest wheel
+        run: cp dist/*.whl dist/joyware_synapse-latest-py3-none-any.whl
+
       - name: Generate release notes from git log
         id: notes
         run: |
