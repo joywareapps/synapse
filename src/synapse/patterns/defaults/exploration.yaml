@@ -1,0 +1,16 @@
+name: exploration
+description: Looping sequence that builds from gentle to intense and back
+loop: true
+steps:
+  - pattern: gentle-pulse
+    duration: 90.0
+  - pattern: steady-wave
+    duration: 60.0
+  - pattern: deep-throb
+    duration: 60.0
+  - pattern: quick-pulse
+    duration: 45.0
+  - pattern: flutter
+    duration: 30.0
+  - pattern: steady-wave
+    duration: 45.0

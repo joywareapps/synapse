@@ -1,0 +1,12 @@
+name: flutter
+description: Fast sawtooth bursts with AM shaping — sharp, intense
+base_period: 1.5
+layers:
+  - name: base
+    blend: set
+    axes:
+      V0: { waveform: sawtooth, freq_multiple: 1.0, center: 0.35, amplitude: 0.2 }
+  - name: shape
+    blend: mul
+    axes:
+      V0: { waveform: sine, freq_multiple: 2.0, center: 0.82, amplitude: 0.18 }

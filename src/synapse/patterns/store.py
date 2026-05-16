@@ -121,12 +121,20 @@ def pattern_from_dict(d: dict) -> Pattern:
     )
 
 
+_DEFAULTS_DIR = Path(__file__).parent / "defaults"
+
+
 class PatternStore:
     def __init__(self, directory: str) -> None:
         self._dir = Path(directory)
         self._patterns: dict[str, Pattern] = {}
 
     def load_all(self) -> None:
+        # Load built-in defaults first; user patterns override by name
+        if _DEFAULTS_DIR.exists():
+            for yaml_file in sorted(_DEFAULTS_DIR.glob("*.yaml")):
+                self._load_file(yaml_file)
+
         if not self._dir.exists():
             self._dir.mkdir(parents=True, exist_ok=True)
             return

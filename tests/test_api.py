@@ -167,10 +167,13 @@ class TestSensorsEndpoints:
 
 
 class TestPatternEndpoints:
-    def test_list_patterns_empty(self, client):
+    def test_list_patterns_includes_defaults(self, client):
         resp = client.get("/api/patterns")
         assert resp.status_code == 200
-        assert resp.json() == []
+        names = [p["name"] for p in resp.json()]
+        # Built-in defaults are always present
+        assert "gentle-pulse" in names
+        assert "exploration" in names
 
     def test_create_and_get_pattern(self, client):
         resp = client.post("/api/patterns", json={

@@ -1,0 +1,12 @@
+name: deep-throb
+description: Slow triangle wave with subtle tremolo — heavy, rhythmic feel
+base_period: 6.0
+layers:
+  - name: base
+    blend: set
+    axes:
+      V0: { waveform: triangle, freq_multiple: 1.0, center: 0.38, amplitude: 0.28 }
+  - name: tremolo
+    blend: mul
+    axes:
+      V0: { waveform: sine, freq_multiple: 5.0, center: 0.9, amplitude: 0.1 }
